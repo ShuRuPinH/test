@@ -48,46 +48,72 @@ func main() {
 
 	// В примере запроса в ArangoDB указан лимит 10, но судя по запросу в MySQL, нужно записать одну строку
 	// на всякий случай проверим, что интересующие поля (с точки зрения передачи в MySQL) во всех 10 записях идентичны
-	setUserName := map[string]struct{}{}
-	setDate := map[string]struct{}{}
-	setParams := map[string]struct{}{}
+	setUserName := map[string][]int{}
+	setDate := map[string][]int{}
+	setParams := map[string][]int{}
 
-	for _, row := range dataRows {
-		setUserName[row.Author.UserName] = struct{}{}
-		setDate[row.Time.Format("2006-01-02")] = struct{}{}
-		setParams[PrettyJSON(row.Params)] = struct{}{}
+	for ind, row := range dataRows {
+		indNames, ok1 := setUserName[row.Author.UserName]
+		if ok1 {
+			setUserName[row.Author.UserName] = append(indNames, ind)
+		} else {
+			setUserName[row.Author.UserName] = []int{ind}
+		}
+		indDate, ok2 := setDate[row.Time.Format("2006-01-02")]
+		if ok2 {
+			setDate[row.Time.Format("2006-01-02")] = append(indDate, ind)
+		} else {
+			setDate[row.Time.Format("2006-01-02")] = []int{ind}
+		}
+		indParams, ok3 := setParams[PrettyJSON(row.Params)]
+		if ok3 {
+			setParams[PrettyJSON(row.Params)] = append(indParams, ind)
+		} else {
+			setParams[PrettyJSON(row.Params)] = []int{ind}
+		}
 	}
 
-	// Если кол-во ключевых параметров отличается, вызовем панику
+	//  Проверим кол-во различных записей и ведем в консоль для анализа
 	if len(setUserName) != 1 {
-		log.Panicf("Найдено 0 или несколько user_name :%d", len(setUserName))
+		log.Printf("Найдено 0 или несколько user_name :%d, %v", len(setUserName), setUserName)
 	}
 	if len(setDate) != 1 {
-		log.Panicf("Найдено 0 или несколько time :%d", len(setDate))
+		log.Printf("Найдено 0 или несколько time :%d, %v", len(setDate), setDate)
 	}
 	if len(setParams) != 1 {
-		log.Panicf("Найдено 0или несколько params :%d", len(setParams))
+		log.Printf("Найдено 0или несколько params :%d, %v", len(setParams), setParams)
 	}
 
-	// Если все как ожидали формируем запрос в БД, согласно условиям
-	mysqlRquest := map[string]string{
-		"period_start":            dataRows[0].Params.Period.Start, // как понимаю нас интересует именно период указанный в парамсах
-		"period_end":              dataRows[0].Params.Period.End,
-		"period_key":              "month",
-		"indicator_to_mo_id":      "315914",
-		"indicator_to_mo_fact_id": "0",
-		"value":                   "1",
-		"fact_time":               dataRows[0].Time.Format("2006-01-02"),
-		"is_plan":                 "0",
-		"supertags":               fmt.Sprintf(`:[{"tag":{"id":2,"name":"Клиент","key":"client","values_source":0},"value":"%s"}]`, dataRows[0].Author.UserName),
-		"auth_user_id":            "40",
-		"comment":                 PrettyJSON(dataRows[0].Params)}
+	// Сделаем вывод, что первые 5 (по ситуации на сейчас) это записи для одно пользователя (записи в MySQL) и ограничимся визуальным анализом (Задание же тестовое)
+	// Формируем запрос в БД, согласно условиям
+	mysqlRquests := make([]map[string]string, 0, len(setUserName))
 
-	// Записываем данные в MySQL
-	response, err = client.Request(urlMysql, mysqlRquest, resty.MethodPost, bearerToken)
-	if err != nil {
-		log.Print("Ошибка при записи в в MySQL: " + err.Error())
-		return
+	for _, ints := range setUserName {
+		tmpMysqlRquest := map[string]string{
+			"period_start":            dataRows[ints[0]].Params.Period.Start, // как понимаю нас интересует именно период указанный в парамса
+			"period_end":              dataRows[ints[0]].Params.Period.End,
+			"period_key":              "month",
+			"indicator_to_mo_id":      "315914",
+			"indicator_to_mo_fact_id": "0",
+			"value":                   "1",
+			"fact_time":               dataRows[ints[0]].Time.Format("2006-01-02"),
+			"is_plan":                 "0",
+			"supertags":               fmt.Sprintf(`:[{"tag":{"id":2,"name":"Клиент","key":"client","values_source":0},"value":"%s"}]`, dataRows[ints[0]].Author.UserName),
+			"auth_user_id":            "40",
+			"comment":                 PrettyJSON(dataRows[ints[0]].Params)}
+
+		mysqlRquests = append(mysqlRquests, tmpMysqlRquest)
+		// Выведем в лог сформированные данные для наглядности
+		log.Print(PrettyJSON(tmpMysqlRquest))
+	}
+
+	// Записываем данные в MySQL просто "в лоб" (ввиду тестовости задания)
+	for _, rquest := range mysqlRquests {
+		response, err = client.Request(urlMysql, rquest, resty.MethodPost, bearerToken)
+		if err != nil {
+			log.Print("Ошибка при записи в в MySQL: " + err.Error())
+			return
+		}
 	}
 
 }
